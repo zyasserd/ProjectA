@@ -1,0 +1,19 @@
+# a^i b^i PDA
+stack # a PDA
+start = p1
+accept = p4
+
+p1,ε,ε:
+p2,$
+
+p2,a,ε:
+p2,A
+
+p2,ε,ε:
+p3,ε
+
+p3,b,A:
+p3,ε
+
+p3,ε,$:
+p4,$

@@ -1,0 +1,23 @@
+# A turing machine that adds one
+(tape)
+start = qBuffer
+accept = qTerm
+
+
+qBuffer,1: 
+qBuffer, 1|R
+
+qBuffer,0: 
+qBuffer, 0|R
+
+qBuffer,ε:
+qMain, ε|L
+
+qMain,ε: 
+qTerm, 1|N
+
+qMain,0: 
+qTerm, 1|N
+
+qMain,1: 
+qMain, 0|L
