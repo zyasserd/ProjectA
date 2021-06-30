@@ -1,6 +1,6 @@
 module Automaton where
 
-import Data.List ( intersperse, zip3, unfoldr )
+import Data.List ( intersperse, zip3, unfoldr, find )
 -- import Data.List.Split ( splitOn )
 import Data.Maybe ( fromJust, fromMaybe, maybeToList )
 import Data.Bifunctor ( first )
@@ -74,16 +74,16 @@ data DSAction =
     TapeA  A Int        -- TapeA A {L, N, R} === {-1, 0, 1}
 
 instance Show DSAction where
-    show InputA      = show [lambda]
-    show (StackA []) = show [lambda]
-    show (StackA xs) = show xs
-    show (QueueA []) = show [lambda]
-    show (QueueA xs) = show xs
-    show (TapeA c m) = show ([c] ++ "|" ++ case m of
-        0  -> "N"
-        1  -> "R"
-        -1 -> "L"
-        _  -> "[show DSAction] TapeA Int argument value error")
+    show InputA      = [lambda]
+    show (StackA []) = [lambda]
+    show (StackA xs) = xs
+    show (QueueA []) = [lambda]
+    show (QueueA xs) = xs
+    show (TapeA c m) = [c] ++ "|" ++ case m of
+       0  -> "N"
+       1  -> "R"
+       -1 -> "L"
+       _  -> "[show DSAction] TapeA Int argument value error"
 
 -- Bool represent whether to pop (true = pop)
 type DSActionPop = (Bool, DSAction)
@@ -119,8 +119,9 @@ type OEntry = (Q, [DSAction])
 data AutomatonWireframe = AutomatonWireframe {
     dsTypes :: [DSType],
         -- InputT if present can only occur at index 0
-    loadingIndex :: Int,
-        -- input would be loaded in ds[loadingIndex] when loading
+    inputIndex :: Int,
+        -- input would be loaded in ds[inputIndex] when loading
+    outputIndex :: Maybe Int,
     start :: Q,
     accepted :: [Q],
     transitionList :: [(IEntry, [OEntry])]
@@ -129,7 +130,7 @@ data AutomatonWireframe = AutomatonWireframe {
 type AutomatonState = (Q, [DS])
 
 transitionFunction :: AutomatonWireframe -> (Q, [A]) -> [ (Q, [DSActionPop]) ]
-transitionFunction (AutomatonWireframe ts _ _ _ hs) (q0, ps) =
+transitionFunction (AutomatonWireframe ts _ _ _ _ hs) (q0, ps) =
     do
         q0'           <- [q0, "_"]
         ps'           <- interleave $ zip ps ts
@@ -149,8 +150,8 @@ transitionFunction (AutomatonWireframe ts _ _ _ hs) (q0, ps) =
 
 
 loadAutomaton :: AutomatonWireframe -> String -> AutomatonState
-loadAutomaton (AutomatonWireframe dsTypes loadingIndex q0 _ _) xs =
-    ( q0, [ loadDS t (if i == loadingIndex then xs else "") | (i, t) <- zip [0..] dsTypes ] )
+loadAutomaton (AutomatonWireframe dsTypes inputIndex _ q0 _ _) xs =
+    ( q0, [ loadDS t (if i == inputIndex then xs else "") | (i, t) <- zip [0..] dsTypes ] )
 (<<) = loadAutomaton
 
 next :: AutomatonWireframe -> AutomatonState -> [AutomatonState]
@@ -159,6 +160,12 @@ next wf (q0, dses) =
 
 (>=>) :: AutomatonWireframe -> [AutomatonState] -> [AutomatonState]
 wf >=> xs = xs >>= next wf
+
+getOutput :: AutomatonWireframe -> AutomatonState -> Maybe DS
+getOutput wf (_, ds) = case outputIndex wf of
+                        Nothing -> Nothing
+                        Just i  -> Just (ds !! i)
+
 
 
 
@@ -180,16 +187,34 @@ guardedAny fTrue fTerminate (x:xs) =
     fTrue x || (not (fTerminate x) && guardedAny fTrue fTerminate xs)
 
 -- check if the automaton is given a string, will it ever get accepted
-(#) :: AutomatonWireframe -> String -> Bool
-wf # s = guardedAny (any (isAccepted wf)) null $ iterate (wf >=>) [loadAutomaton wf s]
+(<<?>>) :: AutomatonWireframe -> String -> Bool
+(<<?>>) wf s = guardedAny (any (isAccepted wf)) null $ iterate (wf >=>) [loadAutomaton wf s]
 
+guardedf :: (a -> Maybe b) -- ^ 
+  -> (a -> Bool) -- ^ fTerminate
+  -> [a] -- ^ 
+  -> Maybe b
+guardedf _ _ [] = Nothing
+guardedf f fTerminate (x:xs) =
+    case f x of
+        (Just v) -> Just v
+        Nothing  -> if fTerminate x then
+                        Nothing
+                    else
+                        guardedf f fTerminate xs
 
+-- compute string and return result; stops with the first accepted result
+-- two errors could happen: (1) no output index in wf, (2) didn't reach accepted state
+(<<!>>) :: AutomatonWireframe -> String -> Maybe DS
+(<<!>>) wf s = do
+    d <- guardedf (find (isAccepted wf)) null $ iterate (wf >=>) [loadAutomaton wf s]
+    getOutput wf d
 
 
 
 -- s0 = [pdaAB << "aabb"]
 -- wf >=> it
--- pdaAB # "aabb" 
+-- pdaAB ? "aabb" 
 
 
 
