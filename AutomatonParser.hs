@@ -4,9 +4,9 @@ module AutomatonParser ( parseAutomaton, automatonFromString ) where
 import Automaton
 
 import Data.Char ( toLower, toUpper )
-import Data.List ( intersperse )
-import Data.Maybe ( fromJust)
-import Control.Monad ( replicateM, void )
+import Data.List ( intersperse, findIndex )
+import Data.Maybe ( fromJust, fromMaybe)
+import Control.Monad ( replicateM, void, when )
 import Text.ParserCombinators.Parsec hiding ( token )
 
 
@@ -14,10 +14,10 @@ import Text.ParserCombinators.Parsec hiding ( token )
 {-
     ### HEADER
         returns:
-            ( [DSType], loadingIndex :: Int, start :: Q, f :: [Q] )
+            ( [DSType], inputIndex :: Int, start :: Q, f :: [Q] )
 
         definitions:
-            specialChar     = "{}()|=,:\r\n_`lambda`"
+            specialChar     = "{}|=,:\r\n\t _^`lambda`"
             alphabet        = not specialChar
             vertex          = many1 alphabet
             alphabetPlus    = alphabet <|> lambda <|> "_"
@@ -29,7 +29,7 @@ import Text.ParserCombinators.Parsec hiding ( token )
 
         [1]
         dsTypesLine:
-            Empty                       => In that case, [DSType] = [InputT], loadingIndex = 0
+            Empty                       => In that case, [DSType] = [InputT], inputIndex = 0
         |   DStype*                     => In that case there is an implicit (InputT)
         |   DStype* (DStype) DStype*
 
@@ -108,6 +108,8 @@ onLineSpaces = void $ many onLineSpace
 emptyLine :: Parser ()
 emptyLine = onLineSpaces >> eol
 
+
+-- -- eof
 -- endInput :: Parser ()
 -- endInput = void $ char '\EOT'
 --     -- this \/ failed as it accepts the empty string
@@ -123,7 +125,7 @@ emptyLine = onLineSpaces >> eol
     real work starts
 -}
 alphabet :: Parser Char
-alphabet = noneOf ("{}()|=,:\r\n\t _" ++ [lambda])
+alphabet = noneOf ("{}|=,:\r\n\t _^" ++ [lambda]) -- ! update up
 
 vertex :: Parser String
 vertex = many1 alphabet
@@ -147,22 +149,30 @@ endOfStatement = try (void $ manyTill onLineSpace (try eol))
 
 
 
-dsTypesLineParser :: Parser ([DSType], Int)
+dsTypesLineParser :: Parser ([DSType], Int, Maybe Int)
 dsTypesLineParser =
     do
         onLineSpaces
-        xs <- sepByTry parseSQT (skipMany1 onLineSpace)
-        ys <- try ( (:)
-                    <$> ((if null xs then return () else skipMany1 onLineSpace)
-                        >> braced "()" parseSQT)
-                    <*> many (try (skipMany1 onLineSpace *> parseSQT))
-                )
-                <|> return []
+        xs <- sepByTry (try (parseSQT <* caseInsensitiveString ":IO" >>= \d -> return (d, "I", "O"))
+                    <|> try (parseSQT <* caseInsensitiveString ":I"  >>= \d -> return (d, "I", "" ))
+                    <|> try (parseSQT <* caseInsensitiveString ":O"  >>= \d -> return (d, "" , "O"))
+                    <|>     (parseSQT                                >>= \d -> return (d, "" , "" ))) (skipMany1 onLineSpace)
         endOfStatement
-        if null ys then
-            return (InputT:xs, 0)
-        else
-            return (xs ++ ys, length xs)
+
+        let countI = length $ filter (\(_,x,_) -> x == "I") xs
+        let countO = length $ filter (\(_,_,x) -> x == "O") xs
+
+        when (countI > 1) (fail "The number of input DSes has to be at most 1")
+        when (countO > 1) (fail "The number of output DSes has to be at most 1")
+
+        let indexI = findIndex (\(_,x,_) -> x == "I") xs
+        let indexO = findIndex (\(_,_,x) -> x == "O") xs
+
+        let xs' = map (\(x,_,_) -> x) xs
+
+        case indexI of
+          Nothing -> return (InputT:xs', 0, (+1) <$> indexO)
+          Just i  -> return (xs',        i, indexO)
     where
         parseS = (caseInsensitiveString "stack" <|> caseInsensitiveString "s") >> return StackT
         parseQ = (caseInsensitiveString "queue" <|> caseInsensitiveString "q") >> return QueueT
@@ -189,16 +199,17 @@ acceptVertexLineParser =
         endOfStatement
         return x
 
-headerSectionParser :: Parser ([DSType], Int, Q, [Q])
+headerSectionParser :: Parser ([DSType], Int, Maybe Int, Q, [Q])
 headerSectionParser =
     do
-        comments; (dsTypes, loadingIndex) <- try dsTypesLineParser
-                                            <|> return ([InputT], 0) -- In case no dsTypesLine
-        comments; start    <- startVertexLineParser
+        comments; (dsTypes, inputIndex, outputIndex) <- try dsTypesLineParser
+                                            <|> return ([InputT], 0, Nothing) -- In case no dsTypesLine
+        comments; start    <- try startVertexLineParser
+                             <|> return "q0"
         comments; accepted <- try acceptVertexLineParser
                              <|> return []
         comments;
-        return (dsTypes, loadingIndex, start, accepted)
+        return (dsTypes, inputIndex, outputIndex, start, accepted)
 
 
 
@@ -227,7 +238,7 @@ inputLineParser ds =
             return (v', xs'))
 
 
-outputLineParser :: [DSType] -> Parser OEntry
+outputLineParser :: [DSType] -> Parser (IEntry -> OEntry)
 outputLineParser ds =
     do
         onLineSpaces
@@ -235,19 +246,44 @@ outputLineParser ds =
         xs <- mapM dsTypeToParser ds
         onLineSpaces
         endOfStatement
-        return (v, xs)
+        return (\(_, inputs) -> (v, [f (inputs, i) | (f, i) <- zip xs [0..]]) )
     where
-        dsTypeToParser :: DSType -> Parser DSAction
-        -- remove pop var
+        -- (^) symbol to denote no change in output
+        -- ex. q0, {1,2,3}, 4:
+        --     q1, ^
+        -- Note: can't be used with the wildcard
+
+        -- "^" -> -1
+        -- "^123" -> 123
+        variable :: Parser (([A], Int) -> A)
+        variable = do
+            char '^'
+            n <- try (Just . read <$> many1 digit) <|> return Nothing
+            when (n >= Just (length ds)) (fail "Variable Index: value greater than number of DSes")
+            return (\(as, index) -> as !! fromMaybe index n)
+
+        dsTypeToParser :: DSType -> Parser (([A], Int) -> DSAction)
         dsTypeToParser ds = case ds of
-            InputT -> return InputA
-            StackT -> token (char ',') >> StackA <$> ((string [lambda] >> return []) <|> many1 alphabet)
-            QueueT -> token (char ',') >> QueueA <$> ((string [lambda] >> return []) <|> many1 alphabet)
-            TapeT  -> token (char ',') >> do
-                        c <- alphabetLambda
-                        char '|'
-                        m <- oneOf "LRN"
-                        return $ TapeA c (fromJust $ lookup m [('L', -1), ('N', 0), ('R', 1)])
+            InputT -> return $ const InputA
+            StackT -> token (char ',') >> ((const . StackA <$> ((string [lambda] >> return []) <|> many1 alphabet))
+                                       <|> ((StackA . return) . ) <$> variable)
+            QueueT -> token (char ',') >> ((const . QueueA <$> ((string [lambda] >> return []) <|> many1 alphabet))
+                                       <|> ((QueueA . return) . ) <$> variable)
+            TapeT  -> token (char ',') >> (
+                        do
+                            c <- alphabetLambda
+                            char '|'
+                            m <- oneOf "LRN"
+                            let i = fromJust $ lookup m [('L', -1), ('N', 0), ('R', 1)]
+                            return $ const $ TapeA c i
+                    <|> do
+                            nn <- variable
+                            char '|'
+                            m <- oneOf "LRN"
+                            let i = fromJust $ lookup m [('L', -1), ('N', 0), ('R', 1)]
+                            return (TapeA <$> nn <*> pure i)
+                        )
+
 {-
     a:
     b #
@@ -258,26 +294,32 @@ inputOutputBlock :: [DSType] -> Parser [(IEntry, [OEntry])]
 inputOutputBlock ds =
     do
         comments
-        inputs  <- inputLineParser ds
-        outputs <- many1 $ try $ outputLineParser ds
+        inputss <- many1 $ try $ inputLineParser ds
+        outputs <- (many1 $ try $ outputLineParser ds) <?> "No output in this block!"
+        let inputs = concat inputss
         onLineSpaces
-        try eol
-        return (do
+        eol
+
+        let toReturn = (do
             i <- inputs
-            return (i, outputs))
+            return (i, outputs <*> [i]))
+        let b = elem '_' $ concatMap (\(_,as) -> concatMap show as) $ concatMap snd toReturn
+        when b (fail "Can't have wildcard (_) refered to by the caret variable!")
+        return toReturn
+
 
 
 -- automatonParser :: Parser AutomatonWireframe
 automatonParser :: Parser AutomatonWireframe
 automatonParser =
     do
-        (dsTypes, loadingIndex, start, accepted) <- headerSectionParser
+        (dsTypes, inputIndex, outputIndex, start, accepted) <- headerSectionParser
 
         deltaList <- concat <$> many (try $ inputOutputBlock dsTypes)
-        
+
         comments; eof
 
-        return (AutomatonWireframe dsTypes loadingIndex start accepted deltaList)
+        return (AutomatonWireframe dsTypes inputIndex outputIndex start accepted deltaList)
 
 
 
