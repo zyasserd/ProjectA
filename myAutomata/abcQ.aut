@@ -1,0 +1,23 @@
+# Queue Automaton to descible the canonical context-sensitive language
+# {a^n b^n c^n | n >=1}
+queue
+start  <- qA
+accept <- qE
+
+qA, a, _:
+qA, B
+
+qA, b, B:
+qB, C
+
+qB, b, B:
+qB, C
+
+qB, c, C:
+qC, $
+
+qC, c, C:
+qC, _
+
+qC, _, $:
+qE, _

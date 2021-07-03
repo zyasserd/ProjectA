@@ -1,0 +1,16 @@
+# PDA to describe Dyck language
+stack
+start  <- q0
+accept <- q2
+
+q0, _, _:
+q1, $
+
+q1, (, _:
+q1, A
+
+q1, ), A:
+q1, _
+
+q1, _, $:
+q2, _

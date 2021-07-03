@@ -1,0 +1,25 @@
+# PDA for detecting palindromes
+stack
+start  <- qS
+accept <- qE
+
+# *      <- a, b, c, d
+
+qS, _, _:
+q0, $
+
+
+q0, * -> *v, _:
+q0, *v              # === q0, ^0
+q1, _
+
+q0, _, _:
+q1, _
+
+
+# q1, *, ^0:
+q1, * -> *v, *v:
+q1, _
+
+q1, _, $:
+qE, _
