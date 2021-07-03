@@ -1,0 +1,29 @@
+# PDA-II to descible the canonical context-sensitive language
+# {a^n b^n c^n | n >=1}
+stack stack
+start  <- qS
+accept <- qE
+
+qS, _, _, _:
+qA, $, $
+
+
+qA, a, _, _:
+qA, S, S
+
+qA, _, _, _:
+qB, _, _
+
+
+qB, b, S, _:
+qB, _, _
+
+qB, _, $, _:
+qC, _, _
+
+
+qC, c, _, S:
+qC, _, _
+
+qC, _, _, $:
+qE, _, _

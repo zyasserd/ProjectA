@@ -1,0 +1,51 @@
+# a turing machine that adds two binary numbers
+t:I t t:O
+start  <- qCopy
+accept <- qTerm
+
+
+# Initial State:
+# copying the 1st summand into the second tape
+qCopy, {0,1}, _, _:
+qCopy, _|R, ^0|R, ^|N
+
+qCopy, +, _, _:
+qGoEnd, _|R, _|N, ^|N
+
+
+# Second State:
+# Buffering, moving cursor of the first tape to the end
+qGoEnd, {0,1}, _, _:
+qGoEnd, ^|R, ^|N, ^|N
+
+qGoEnd, _, _, _:
+qAdd, ^|L, ^|L, ^|N
+
+
+# Third state: adding without carrying
+qAdd, _, _, _:
+qTerm, ^|N, ^|N, _|N
+
+qAdd, 0, _, _:
+qAdd, _, 0, _:
+qAdd, 0, 0, _:
+qAdd, ^|L, ^|L, 0|L
+
+qAdd, {0, _}, 1, _:
+qAdd, 1, {0, _}, _:
+qAdd, ^|L, ^|L, 1|L
+
+qAdd, 1, 1, _:
+qCarry, ^|L, ^|L, 0|L
+
+
+# Forth state: adding with carrying
+qCarry, {0, _}, {0, _}, _:
+qAdd, ^|L, ^|L, 1|L
+
+qCarry, {0, _}, 1, _:
+qCarry, 1, {0, _}, _:
+qCarry, ^|L, ^|L, 0|L
+
+qCarry, 1, 1, _:
+qCarry, ^|L, ^|L, 1|L
