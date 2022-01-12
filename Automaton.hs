@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 module Automaton where
 
 import Data.List ( intersperse, zip3, unfoldr, find, sort, group )
@@ -234,6 +235,7 @@ isDeterministic (AutomatonWireframe dses _ _ _ _ delta) =
 rmdups :: Ord a => [a] -> [a]
 rmdups = map head . group . sort
 
+-- ! Add Transducers
 automatonType :: AutomatonWireframe -> String
 automatonType wf
     | ds == [InputT]                  = determinism ++ "Finite Automaton"
@@ -258,20 +260,19 @@ General formula of transition functions:
 automatonEntryFormat :: AutomatonWireframe -> String 
 automatonEntryFormat (AutomatonWireframe dses _ _ _ _ _) =
     " " ++
-    concatMap (\ds -> case ds of
+    concatMap (\case
             InputT -> " v Input  "
             StackT -> " v Stack  "
             QueueT -> " v Queue  "
             TapeT  -> " v Tape         ") dses ++ "\nQ" ++
-    concatMap (\ds -> case ds of
+    concatMap (\case
             InputT -> " x (Σ U _)"
             StackT -> " x (Σ U _)"
             QueueT -> " x (Σ U _)"
             TapeT  -> " x (Σ U _)      ") dses ++ " ->\nQ" ++
-    concatMap (\ds -> case ds of
+    concatMap (\case
             InputT -> "          "
             StackT -> " x  Σ*    "
             QueueT -> " x  Σ*    "
             TapeT  -> " x (Σ | {L,R,N})") dses
-
 
