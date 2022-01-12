@@ -6,14 +6,14 @@ import Data.Char ( toLower, toUpper )
 import Data.List ( intersperse, findIndex )
 import Data.Maybe ( fromJust, fromMaybe )
 import Data.Either ( isRight, rights, isLeft, lefts )
-import Data.Map ( Map, fromList, (!), member, insert )
+import Data.Map ( Map, fromList, (!), member, insert, union )
 import Data.Bifunctor ( second )
 import Control.Monad ( replicateM, void, when )
 import Text.ParserCombinators.Parsec hiding ( token )
 
 
 {-
-    File Description
+    File Format Description
 -}
 {-
     ### DEFINITIONS
@@ -188,8 +188,8 @@ dsTypesLineParser =
         let countI = length $ filter (\(_,x,_) -> x == "I") xs
         let countO = length $ filter (\(_,_,x) -> x == "O") xs
 
-        when (countI > 1) (fail "The number of input DSes has to be at most 1")
-        when (countO > 1) (fail "The number of output DSes has to be at most 1")
+        when (countI > 1) (fail "Error: The number of input DSes has to be at most 1!")
+        when (countO > 1) (fail "Error: The number of output DSes has to be at most 1!")
 
         let indexI = findIndex (\(_,x,_) -> x == "I") xs
         let indexO = findIndex (\(_,_,x) -> x == "O") xs
@@ -233,6 +233,20 @@ variableLineParser =
         endOfStatement
         return (var, ls)
 
+manyVariableLineParser :: Parser GlobalVarsMap
+manyVariableLineParser = someVars (fromList [])
+    where
+        -- nearly the same function with an accumulator added
+        someVars :: GlobalVarsMap -> Parser GlobalVarsMap
+        someVars acc =
+            do
+                (varName, varVal) <- variableLineParser <* comments
+
+                when (varName `member` acc) (fail $ "Global Variable (*" ++ varName ++ ") was declared before!")
+                
+                let acc' = insert varName varVal acc
+                try (someVars acc') <|> return acc'
+
 headerSectionParser :: Parser ([DSType], Int, Maybe Int, Q, [Q], GlobalVarsMap)
 headerSectionParser =
     do
@@ -242,13 +256,12 @@ headerSectionParser =
                               <|> return "q0"
         comments; accepted  <- try acceptVertexLineParser
                               <|> return []
-        comments; globalVariables <- many (variableLineParser <* comments)
-                                    <|> return [] -- ! repeating variables
+        comments; globalVariables <- manyVariableLineParser <|> return (fromList [])
 
 
-        let gVs = fromList $ [("",      ['a'..'z'] ++ ['A'..'Z'] ++ ['0'..'9']),
-                              ("alpha", ['a'..'z'] ++ ['A'..'Z']),
-                              ("num",   ['0'..'9'])] ++ globalVariables
+        let gVs = globalVariables `union` fromList [("",      ['a'..'z'] ++ ['A'..'Z'] ++ ['0'..'9']),
+                                                    ("alpha", ['a'..'z'] ++ ['A'..'Z']),
+                                                    ("num",   ['0'..'9'])]
         return (dsTypes, inputIndex, outputIndex, start, accepted, gVs)
 
 
@@ -334,8 +347,8 @@ inputLineParser ds gVs =
 
                 let lVs' = case newVar of
                             Nothing                             -> Right $ lVs
-                            Just newVarS | newVarS `member` gVs -> Left  $ "Error: variable " ++ newVarS ++ " was already defined globally!"
-                            Just newVarS | newVarS `member` lVs -> Left  $ "Error: variable " ++ newVarS ++ " was already defined locally!"
+                            Just newVarS | newVarS `member` gVs -> Left  $ "Error: variable (*" ++ newVarS ++ ") was already defined globally!"
+                            Just newVarS | newVarS `member` lVs -> Left  $ "Error: variable (*" ++ newVarS ++ ") was already defined locally!"
                             Just newVarS | otherwise            -> Right $ insert newVarS i lVs
                 when (isLeft lVs') (Left $ fromLeft lVs')
 
@@ -353,9 +366,7 @@ outputLineParser ds gVs =
         return (\((_, inputs), lVs) -> do
                     let vxs = [f (lVs, inputs, i) | (f, i) <- zip xs [0..]]
 
-                    when (not $ null $ lefts vxs) (Left $ head $ lefts vxs)
-
-                    Right [(v, a) | a <- sequence (rights vxs)]
+                    ((,) v <$>) . sequence <$> sequenceA vxs
             )
     where
         variablePosition :: Parser ((LocalVarsMap, [A], Int) -> Either String [A])
@@ -406,7 +417,7 @@ inputOutputBlock ds gVs =
     do
         comments
         inputss  <- many1 $ try $ inputLineParser ds gVs
-        outputss <- (many1 $ try $ outputLineParser ds gVs) <?> "No output in this block!"
+        outputss <- (many1 $ try $ outputLineParser ds gVs) <?> "Error: No output in this block!"
         onLineSpaces
         eol
 

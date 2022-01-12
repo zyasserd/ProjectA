@@ -1,13 +1,11 @@
 import Automaton
 import AutomatonParser
 
-import Data.Char ( toLower )
 import Data.Maybe ( isNothing )
 import System.Environment ( getArgs )
-import System.Exit ( die )
-import System.IO ( hSetBuffering, stdout, BufferMode( NoBuffering ) )
-import qualified Data.Text.IO.Utf8 ( readFile )
+import System.IO ( hSetBuffering, stdout, BufferMode ( NoBuffering ) )
 import qualified Data.Text ( unpack )
+import qualified Data.Text.IO.Utf8 ( readFile )
 
 
 
@@ -16,6 +14,9 @@ import qualified Data.Text ( unpack )
 -}
 readF :: FilePath -> IO String
 readF path = Data.Text.unpack <$> Data.Text.IO.Utf8.readFile path
+
+putLn :: IO ()
+putLn = putStrLn ""
 
 -- "1 3 31" Bold Italic Red
 (!) :: String -> String -> String
@@ -39,6 +40,20 @@ showAutomatonState i (q, ds) = "(" ++ show i ! "32" ++ ") "
         ls = map (\x -> showDS x ++ "\n") ds
 
 
+helpStr :: String
+helpStr = "\nWelcome to ProjectA!\n\n\
+\  1. (r)eload file\n\
+\  2. (q)uit\n\
+\  3. print (h)elp\n\
+\  4. print (d)iagnostics\n\
+\  5. print (i)nfo\n\
+\  6. print (t)ransitions\n\
+\  7. test membership   (?input string)\n\
+\  8. print computation (!input string)\n\
+\  9. enter navigation  (/input string)\n\
+\     where you can press enter to advance one step\n\
+\                         q     to quit navigation\n\n"
+
 
 {-
     Here the real works starts!
@@ -49,44 +64,59 @@ main = do
     args <- getArgs
     wf <- automatonFromString <$> readF (head args)
 
+    -- Sth to force the strict evaluation of wf
+    -- and show any parsing errors
+    putStr (seq wf "")
+    putStr helpStr
+
     mainLoop wf
+
 
 mainLoop :: AutomatonWireframe -> IO ()
 mainLoop wf = do
-    putStr ">>> "
+    putStr ">>>> "
     s <- getLine
 
     case s of
         "r"       -> do
                         putStrLn "File Reloaded!\n"
                         main
-        "q"       -> putStrLn "Goodbye!\n"
+        "q"       -> putLn
         _         -> do
             case s of
                 []        -> return ()
+            -- (h)elp
+                "h"       -> do
+                                putStr helpStr
             -- (d)iagnostics
-                "d"       -> print wf
+                "d"       -> do
+                                print wf
+                                putLn
             -- (i)nfo
                 "i"       -> do
                                 putStrLn $ automatonType wf
-                                putStrLn ""
+                                putLn
                                 putStrLn $ automatonEntryFormat wf
-                                putStrLn ""
+                                putLn
             -- (t)ransitions
                 "t"       -> do
                                 putStrLn $ "Start  <- " ++ start wf
                                 putStrLn $ "Accept <-"  ++ concatMap (" " ++) (accepted wf)
-                                putStrLn ""
+                                putLn
                                 let pIEntry (q, as) = q ++ concatMap (\x -> ", " ++ [x]) as
                                 let pOEntry (q, as) = q ++ concatMap (\x -> ", " ++ show x) as
                                 putStr $ concat [ pIEntry ie ++ " ->\n" ++ (concat [pOEntry oe ++ "\n" | oe <- oes]) ++ "\n"  | (ie, oes) <- transitionList wf]
-                ('?': xs) -> print $ wf <<?>> xs
+            -- [?] is in
+                ('?': xs) -> do
+                                print $ wf <<?>> xs
+                                putLn
+            -- [!] compute
                 ('!': xs) -> if isNothing (outputIndex wf) then
                                 putStrLn "No output index is chosen for this automaton!\n"
                              else do
                                 putStrLn $ maybe "No result!" showDS (wf <<!>> xs)
-                                putStrLn ""
-
+                                putLn
+            -- [/] enter navigation mode
                 ('/': xs) -> navigateLoop wf [wf << xs]
                 _         -> putStrLn "Unrecognized Input\n"
 
@@ -95,7 +125,7 @@ mainLoop wf = do
 navigateLoop :: AutomatonWireframe -> [AutomatonState] -> IO ()
 navigateLoop wf as = do
     putStr $ concat $ zipWith showAutomatonState [1..] as
-    putStr "|>> "
+    putStr "nav> "
     s <- getLine
     case s of
         "q" -> return ()
